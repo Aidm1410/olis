@@ -1,0 +1,14 @@
+{
+  "name": "olis-audioarchive-minesweeper",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "engines": {
+    "node": ">=22.13.0"
+  },
+  "scripts": {
+    "start": "node --env-file-if-exists=.env server.js",
+    "check": "node --check server.js && node --check game.js && node --check public/app.js",
+    "test": "node --test"
+  }
+}
