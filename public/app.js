@@ -9,6 +9,16 @@ const reward = document.querySelector('#reward');
 const claim = document.querySelector('#claim');
 const rewardLink = document.querySelector('#reward-link');
 const instructions = document.querySelector('#instructions');
+const soundToggle = document.querySelector('#sound-toggle');
+const Audio = window.AudioContext ?? window.webkitAudioContext;
+
+const sounds = {
+  reveal: ['triangle', [[420, 570, 0, 0.09]]],
+  flag: ['sine', [[660, 880, 0, 0.11]]],
+  unflag: ['sine', [[880, 520, 0, 0.09]]],
+  loss: ['sawtooth', [[125, 42, 0, 0.36]]],
+  win: ['triangle', [[523.25, 523.25, 0, 0.16], [659.25, 659.25, 0.10, 0.16], [783.99, 783.99, 0.20, 0.28]]],
+};
 
 let game;
 let busy = false;
@@ -17,7 +27,61 @@ let activeCell = 0;
 let resetTimer;
 let clockStartedAt;
 let claimPending = false;
+let audio;
+let volume;
+let soundEnabled = true;
 const cells = [];
+
+async function prepareSound() {
+  if (!Audio || !soundEnabled) return;
+
+  try {
+    if (!audio) {
+      audio = new Audio();
+      volume = audio.createGain();
+      volume.gain.value = 0.12;
+      volume.connect(audio.destination);
+    }
+    if (audio.state !== 'running') await audio.resume();
+  } catch (error) {
+    console.warn('Звук недоступен.', error);
+  }
+}
+
+function playSound(name) {
+  if (!soundEnabled || audio?.state !== 'running') return;
+  const [wave, notes] = sounds[name];
+  const now = audio.currentTime;
+
+  for (const [frequency, endFrequency, delay, duration] of notes) {
+    const start = now + delay;
+    const end = start + duration;
+    const oscillator = audio.createOscillator();
+    const envelope = audio.createGain();
+    oscillator.type = wave;
+    oscillator.frequency.setValueAtTime(frequency, start);
+    oscillator.frequency.exponentialRampToValueAtTime(endFrequency, end);
+    envelope.gain.setValueAtTime(0.001, start);
+    envelope.gain.exponentialRampToValueAtTime(0.55, start + 0.015);
+    envelope.gain.exponentialRampToValueAtTime(0.001, end);
+    oscillator.connect(envelope);
+    envelope.connect(volume);
+    oscillator.addEventListener('ended', () => {
+      oscillator.disconnect();
+      envelope.disconnect();
+    }, { once: true });
+    oscillator.start(start);
+    oscillator.stop(end);
+  }
+}
+
+function playMoveSound(action, next) {
+  if (next.revision === game.revision || action === 'reset') return;
+  if (next.status === 'lost') playSound('loss');
+  else if (next.status === 'won') playSound('win');
+  else if (action === 'flag') playSound(next.flags.length > game.flags.length ? 'flag' : 'unflag');
+  else playSound('reveal');
+}
 
 async function request(path, body) {
   const response = await fetch(path, {
@@ -149,6 +213,7 @@ async function move(action, index) {
       return;
     }
 
+    if (action !== 'reset') void prepareSound();
     const body = { action, index, revision: game.revision };
     let result = await request('/api/move', body);
     if (result.code === 429 && result.data.retryIn) {
@@ -157,6 +222,7 @@ async function move(action, index) {
     }
 
     if (result.code === 200 || result.code === 409) {
+      if (result.code === 200) playMoveSound(action, result.data);
       if (action === 'reset' && result.data.status === 'ready') setFlagMode(false);
       render(result.data);
     } else if (result.code === 401) {
@@ -242,6 +308,14 @@ board.addEventListener('keydown', (event) => {
 
 document.querySelector('#new-game').addEventListener('click', () => void move('reset'));
 flagMode.addEventListener('click', () => setFlagMode(!flagging));
+soundToggle.hidden = !Audio;
+soundToggle.addEventListener('click', () => {
+  soundEnabled = !soundEnabled;
+  soundToggle.setAttribute('aria-pressed', String(soundEnabled));
+  soundToggle.textContent = soundEnabled ? 'Звук вкл.' : 'Звук выкл.';
+  if (volume) volume.gain.value = soundEnabled ? 0.12 : 0;
+  if (soundEnabled) void prepareSound();
+});
 document.querySelector('#help').addEventListener('click', () => instructions.showModal());
 document.querySelector('#close-help').addEventListener('click', () => instructions.close());
 
